@@ -30,6 +30,11 @@ type GTStats struct {
 	LastTime    time.Time
 }
 
+type EnergyStats struct {
+	LastEnergy  float64
+	LastEnergyT time.Time
+}
+
 type GPU struct {
 	ID          string
 	SysPath     string
@@ -37,8 +42,7 @@ type GPU struct {
 	HwmonPath   string
 	GTs         map[string]*GTStats
 	VRAMs       []string
-	LastEnergy  float64
-	LastEnergyT time.Time
+	Energy      map[string]*EnergyStats
 	mu          sync.Mutex
 }
 
@@ -51,6 +55,7 @@ func discoverGPUs() []*GPU {
 			ID:      cardID,
 			SysPath: cardPath,
 			GTs:     make(map[string]*GTStats),
+			Energy:  make(map[string]*EnergyStats),
 		}
 
 		// Discover DebugPath
@@ -169,6 +174,10 @@ func main() {
 	gtUsageGauge, _ := meter.Float64ObservableGauge("xe_gpu_gt_usage_percent", metric.WithDescription("GPU GT utilization percent"))
 	freqActualGauge, _ := meter.Float64ObservableGauge("xe_gpu_frequency_actual_mhz", metric.WithDescription("Actual GPU frequency in MHz"))
 	freqRequestedGauge, _ := meter.Float64ObservableGauge("xe_gpu_frequency_requested_mhz", metric.WithDescription("Requested GPU frequency in MHz"))
+	freqMinGauge, _ := meter.Float64ObservableGauge("xe_gpu_frequency_min_mhz", metric.WithDescription("Configured minimum GPU frequency in MHz"))
+	freqMaxGauge, _ := meter.Float64ObservableGauge("xe_gpu_frequency_max_mhz", metric.WithDescription("Configured maximum GPU frequency in MHz"))
+	throttleStatusGauge, _ := meter.Float64ObservableGauge("xe_gpu_throttle_status", metric.WithDescription("GPU frequency throttle status (0 = unthrottled, >0 = throttled)"))
+	throttleReasonGauge, _ := meter.Float64ObservableGauge("xe_gpu_throttle_reason", metric.WithDescription("GPU frequency throttle reasons"))
 	powerGauge, _ := meter.Float64ObservableGauge("xe_gpu_power_watts", metric.WithDescription("Approximate GPU power consumption in Watts"))
 	fanGauge, _ := meter.Float64ObservableGauge("xe_gpu_fan_rpm", metric.WithDescription("GPU Fan Speed in RPM"))
 
@@ -202,6 +211,26 @@ func main() {
 				o.ObserveFloat64(freqActualGauge, float64(actual), metric.WithAttributeSet(gtAttr))
 				o.ObserveFloat64(freqRequestedGauge, float64(requested), metric.WithAttributeSet(gtAttr))
 
+				minFreq := readUint64(filepath.Join(gtPath, "freq0/min_freq"))
+				maxFreq := readUint64(filepath.Join(gtPath, "freq0/max_freq"))
+				o.ObserveFloat64(freqMinGauge, float64(minFreq), metric.WithAttributeSet(gtAttr))
+				o.ObserveFloat64(freqMaxGauge, float64(maxFreq), metric.WithAttributeSet(gtAttr))
+
+				// Throttle Status and Reasons
+				throttlePath := filepath.Join(gtPath, "freq0/throttle")
+				if _, err := os.Stat(throttlePath); err == nil {
+					statusVal := readUint64(filepath.Join(throttlePath, "status"))
+					o.ObserveFloat64(throttleStatusGauge, float64(statusVal), metric.WithAttributeSet(gtAttr))
+
+					reasons, _ := filepath.Glob(filepath.Join(throttlePath, "reason_*"))
+					for _, reasonPath := range reasons {
+						reasonName := strings.TrimPrefix(filepath.Base(reasonPath), "reason_")
+						reasonVal := readUint64(reasonPath)
+						reasonAttr := attribute.NewSet(cardAttr, attribute.String("gt", gtID), attribute.String("reason", reasonName))
+						o.ObserveFloat64(throttleReasonGauge, float64(reasonVal), metric.WithAttributeSet(reasonAttr))
+					}
+				}
+
 				// Usage
 				idlePath := filepath.Join(gtPath, "gtidle/idle_residency_ms")
 				currentIdle := readUint64(idlePath)
@@ -223,19 +252,38 @@ func main() {
 			// HWMON (Power and Fans)
 			if gpu.HwmonPath != "" {
 				// Power
-				e1Path := filepath.Join(gpu.HwmonPath, "energy1_input")
-				now := time.Now()
-				e1 := readFloat64(e1Path)
-				if !gpu.LastEnergyT.IsZero() {
-					dt := now.Sub(gpu.LastEnergyT).Seconds()
-					de := e1 - gpu.LastEnergy
-					if dt > 0 && de >= 0 {
-						power := (de / 1000000.0) / dt
-						o.ObserveFloat64(powerGauge, power, metric.WithAttributes(cardAttr, attribute.String("type", "card")))
+				energyPaths, _ := filepath.Glob(filepath.Join(gpu.HwmonPath, "energy*_input"))
+				for _, energyPath := range energyPaths {
+					energyID := filepath.Base(energyPath)
+					eLabelPath := strings.Replace(energyPath, "_input", "_label", 1)
+					var labelVal string
+					if labelBytes, err := os.ReadFile(eLabelPath); err == nil {
+						labelVal = strings.TrimSpace(string(labelBytes))
 					}
+					if labelVal == "" {
+						labelVal = strings.TrimSuffix(strings.TrimPrefix(energyID, "energy"), "_input")
+					}
+
+					now := time.Now()
+					eVal := readFloat64(energyPath)
+					
+					stats, exists := gpu.Energy[energyID]
+					if !exists {
+						stats = &EnergyStats{}
+						gpu.Energy[energyID] = stats
+					}
+
+					if !stats.LastEnergyT.IsZero() {
+						dt := now.Sub(stats.LastEnergyT).Seconds()
+						de := eVal - stats.LastEnergy
+						if dt > 0 && de >= 0 {
+							power := (de / 1000000.0) / dt
+							o.ObserveFloat64(powerGauge, power, metric.WithAttributes(cardAttr, attribute.String("type", labelVal)))
+						}
+					}
+					stats.LastEnergy = eVal
+					stats.LastEnergyT = now
 				}
-				gpu.LastEnergy = e1
-				gpu.LastEnergyT = now
 
 				// Fans
 				fans, _ := filepath.Glob(filepath.Join(gpu.HwmonPath, "fan*_input"))
@@ -249,7 +297,7 @@ func main() {
 		}
 		if *debug { log.Printf("Metric collection completed in %s", time.Since(start)) }
 		return nil
-	}, vramTotalGauge, vramUsedGauge, gtUsageGauge, freqActualGauge, freqRequestedGauge, powerGauge, fanGauge)
+	}, vramTotalGauge, vramUsedGauge, gtUsageGauge, freqActualGauge, freqRequestedGauge, freqMinGauge, freqMaxGauge, throttleStatusGauge, throttleReasonGauge, powerGauge, fanGauge)
 
 	if *enableProm {
 		go func() {
