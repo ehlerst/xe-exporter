@@ -9,7 +9,7 @@ A high-performance Prometheus and OpenTelemetry exporter for Intel Arc GPUs (Bat
 
 - **OTel Native:** Built using the OpenTelemetry Go SDK for unified metrics.
 - **Dual Export:** Supports both Prometheus (`/metrics` endpoint) and OTLP gRPC push.
-- **Real-time Monitoring:** Collects VRAM, frequency, power, fan speeds, and GPU utilization.
+- **Real-time Monitoring:** Collects VRAM, frequency (actual/requested/min/max limits), power, fan speeds, frequency throttling status/reasons, and GPU utilization.
 - **Systemd Ready:** Includes a pre-configured service file for easy deployment.
 
 ## Metrics
@@ -21,8 +21,12 @@ A high-performance Prometheus and OpenTelemetry exporter for Intel Arc GPUs (Bat
 | `xe_gpu_gt_usage_percent` | GPU GT utilization percent | `card`, `gt` |
 | `xe_gpu_frequency_actual_mhz` | Actual clock speed | `card`, `gt` |
 | `xe_gpu_frequency_requested_mhz` | Requested clock speed | `card`, `gt` |
-| `xe_gpu_power_watts` | Power draw (card/package) | `card`, `type` |
+| `xe_gpu_frequency_min_mhz` | Configured minimum frequency | `card`, `gt` |
+| `xe_gpu_frequency_max_mhz` | Configured maximum frequency | `card`, `gt` |
+| `xe_gpu_power_watts` | Power draw | `card`, `type` |
 | `xe_gpu_fan_rpm` | Fan speed | `card`, `fan` |
+| `xe_gpu_throttle_status` | Frequency throttle status (0 = unthrottled, >0 = throttled) | `card`, `gt` |
+| `xe_gpu_throttle_reason` | Frequency throttle reasons (flags) | `card`, `gt`, `reason` |
 
 ## Requirements
 
