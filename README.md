@@ -11,6 +11,10 @@ A high-performance Prometheus and OpenTelemetry exporter for Intel Arc GPUs (Bat
 - **Dual Export:** Supports both Prometheus (`/metrics` endpoint) and OTLP gRPC push.
 - **Real-time Monitoring:** Collects VRAM, frequency (actual/requested/min/max limits), power & power limits, temperatures (auto-discovered via hwmon), fan speeds, frequency throttling status/reasons, GPU utilization, and optional `xe` PMU per-engine busyness.
 - **Systemd Ready:** Includes a pre-configured service file for easy deployment.
+- **Enhanced VRAM Discovery:** Supports Linux 7.0+ debugfs tile*/vram_mm VRAM discovery
+- **Improved Sensor Discovery:** Auto-discovers hwmon temperature and power limit sensors
+- **Multi-GPU Support:** Works with multiple GPUs in the system
+- **Throttling Diagnostics:** Reports frequency throttling status and reasons
 
 ## Metrics
 
