@@ -60,13 +60,18 @@ type EnginePMU struct {
 	HasLast    bool
 }
 
+type VRAMSource struct {
+	ID   string
+	Path string
+}
+
 type GPU struct {
 	ID        string
 	SysPath   string
 	DebugPath string
 	HwmonPath string
 	GTs       map[string]*GTStats
-	VRAMs     []string
+	VRAMs     []VRAMSource
 	Energy    map[string]*EnergyStats
 	Engines   []*EnginePMU
 	mu        sync.Mutex
@@ -94,6 +99,47 @@ func isDRMCardDir(name string) bool {
 		}
 	}
 	return true
+}
+
+func discoverVRAMs(debugPath string) []VRAMSource {
+	if debugPath == "" {
+		return nil
+	}
+
+	seen := make(map[string]bool)
+	var sources []VRAMSource
+
+	// Linux 7.0+ xe driver: /sys/kernel/debug/dri/<card>/tile<N>/vram_mm -> vram="vram<N>_mm"
+	tilePaths, _ := filepath.Glob(filepath.Join(debugPath, "tile*", "vram_mm"))
+	sort.Strings(tilePaths)
+	for _, p := range tilePaths {
+		tileDir := filepath.Base(filepath.Dir(p))
+		suffix := strings.TrimPrefix(tileDir, "tile")
+		if suffix == "" || suffix == tileDir {
+			continue
+		}
+		vramID := fmt.Sprintf("vram%s_mm", suffix)
+		if !seen[vramID] {
+			seen[vramID] = true
+			sources = append(sources, VRAMSource{ID: vramID, Path: p})
+		}
+	}
+
+	// Legacy (Linux <= 6.x) xe driver: /sys/kernel/debug/dri/<card>/vram<N>_mm
+	legacyPaths, _ := filepath.Glob(filepath.Join(debugPath, "vram*_mm"))
+	sort.Strings(legacyPaths)
+	for _, p := range legacyPaths {
+		vramID := filepath.Base(p)
+		if !seen[vramID] {
+			seen[vramID] = true
+			sources = append(sources, VRAMSource{ID: vramID, Path: p})
+		}
+	}
+
+	sort.Slice(sources, func(i, j int) bool {
+		return sources[i].ID < sources[j].ID
+	})
+	return sources
 }
 
 func discoverGPUs(enablePMU bool) []*GPU {
@@ -129,11 +175,9 @@ func discoverGPUs(enablePMU bool) []*GPU {
 			gpu.DebugPath = debugPath
 		}
 
-		// Discover VRAMs in debugfs
+		// Discover VRAMs in debugfs (Linux 7.0+ tile*/vram_mm and legacy vram*_mm)
 		if gpu.DebugPath != "" {
-			vrams, _ := filepath.Glob(filepath.Join(gpu.DebugPath, "vram*_mm"))
-			sort.Strings(vrams)
-			gpu.VRAMs = vrams
+			gpu.VRAMs = discoverVRAMs(gpu.DebugPath)
 		}
 
 		// Discover GTs in sysfs
@@ -581,10 +625,9 @@ func main() {
 			cardAttr := attribute.String("card", gpu.ID)
 
 			// VRAM
-			for _, vramFile := range gpu.VRAMs {
-				vramID := filepath.Base(vramFile)
-				total, used := collectVRAM(vramFile)
-				vramAttr := attribute.NewSet(cardAttr, attribute.String("vram", vramID))
+			for _, vram := range gpu.VRAMs {
+				total, used := collectVRAM(vram.Path)
+				vramAttr := attribute.NewSet(cardAttr, attribute.String("vram", vram.ID))
 				o.ObserveFloat64(vramTotalGauge, float64(total), metric.WithAttributeSet(vramAttr))
 				o.ObserveFloat64(vramUsedGauge, float64(used), metric.WithAttributeSet(vramAttr))
 			}

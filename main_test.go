@@ -100,3 +100,89 @@ func TestIsDRMCardDir(t *testing.T) {
 		t.Fatal("expected non-card dirs to fail")
 	}
 }
+
+func TestDiscoverVRAMsAndCollect(t *testing.T) {
+	sample := "  use_type: 1\n  use_tt: 0\n  size: 25669140480\n  usage: 17741950976\ndefault_page_size: 4KiB\nman size:25669140480\n"
+
+	t.Run("linux7_tile_vram_mm", func(t *testing.T) {
+		dir := t.TempDir()
+		tile0 := filepath.Join(dir, "tile0")
+		tile1 := filepath.Join(dir, "tile1")
+		if err := os.MkdirAll(tile0, 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(tile1, 0755); err != nil {
+			t.Fatal(err)
+		}
+		p0 := filepath.Join(tile0, "vram_mm")
+		p1 := filepath.Join(tile1, "vram_mm")
+		if err := os.WriteFile(p0, []byte(sample), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p1, []byte("  size: 12884901888\n  usage: 1048576\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		got := discoverVRAMs(dir)
+		want := []VRAMSource{
+			{ID: "vram0_mm", Path: p0},
+			{ID: "vram1_mm", Path: p1},
+		}
+		if len(got) != len(want) {
+			t.Fatalf("got %d VRAM sources (%+v), want %d", len(got), got, len(want))
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Errorf("source[%d] = %+v, want %+v", i, got[i], want[i])
+			}
+		}
+
+		total, used := collectVRAM(got[0].Path)
+		if total != 25669140480 || used != 17741950976 {
+			t.Fatalf("collectVRAM(tile0/vram_mm) = (%d, %d), want (25669140480, 17741950976)", total, used)
+		}
+	})
+
+	t.Run("legacy_vram_mm", func(t *testing.T) {
+		dir := t.TempDir()
+		p0 := filepath.Join(dir, "vram0_mm")
+		if err := os.WriteFile(p0, []byte(sample), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		got := discoverVRAMs(dir)
+		if len(got) != 1 || got[0] != (VRAMSource{ID: "vram0_mm", Path: p0}) {
+			t.Fatalf("got %+v, want single legacy vram0_mm", got)
+		}
+	})
+
+	t.Run("deduplicate_when_both_exist", func(t *testing.T) {
+		dir := t.TempDir()
+		tile0 := filepath.Join(dir, "tile0")
+		if err := os.MkdirAll(tile0, 0755); err != nil {
+			t.Fatal(err)
+		}
+		tilePath := filepath.Join(tile0, "vram_mm")
+		legacyPath0 := filepath.Join(dir, "vram0_mm")
+		legacyPath1 := filepath.Join(dir, "vram1_mm")
+		for _, p := range []string{tilePath, legacyPath0, legacyPath1} {
+			if err := os.WriteFile(p, []byte(sample), 0644); err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		got := discoverVRAMs(dir)
+		want := []VRAMSource{
+			{ID: "vram0_mm", Path: tilePath},
+			{ID: "vram1_mm", Path: legacyPath1},
+		}
+		if len(got) != len(want) {
+			t.Fatalf("got %d VRAM sources (%+v), want %d", len(got), got, len(want))
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Errorf("source[%d] = %+v, want %+v", i, got[i], want[i])
+			}
+		}
+	})
+}
