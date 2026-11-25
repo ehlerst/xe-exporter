@@ -9,7 +9,7 @@ A high-performance Prometheus and OpenTelemetry exporter for Intel Arc GPUs (Bat
 
 - **OTel Native:** Built using the OpenTelemetry Go SDK for unified metrics.
 - **Dual Export:** Supports both Prometheus (`/metrics` endpoint) and OTLP gRPC push.
-- **Real-time Monitoring:** Collects VRAM, frequency (actual/requested/min/max limits), power, fan speeds, frequency throttling status/reasons, and GPU utilization.
+- **Real-time Monitoring:** Collects VRAM, frequency (actual/requested/min/max limits), power & power limits, temperatures (auto-discovered via hwmon), fan speeds, frequency throttling status/reasons, GPU utilization, and optional `xe` PMU per-engine busyness.
 - **Systemd Ready:** Includes a pre-configured service file for easy deployment.
 
 ## Metrics
@@ -19,11 +19,15 @@ A high-performance Prometheus and OpenTelemetry exporter for Intel Arc GPUs (Bat
 | `xe_gpu_vram_total_bytes` | Total VRAM capacity | `card`, `vram` |
 | `xe_gpu_vram_used_bytes` | Current VRAM allocation | `card`, `vram` |
 | `xe_gpu_gt_usage_percent` | GPU GT utilization percent | `card`, `gt` |
+| `xe_gpu_engine_busy_percent` | GPU engine busyness percent via `xe` PMU (requires `-enable-pmu`) | `card`, `gt`, `engine` |
 | `xe_gpu_frequency_actual_mhz` | Actual clock speed | `card`, `gt` |
 | `xe_gpu_frequency_requested_mhz` | Requested clock speed | `card`, `gt` |
 | `xe_gpu_frequency_min_mhz` | Configured minimum frequency | `card`, `gt` |
 | `xe_gpu_frequency_max_mhz` | Configured maximum frequency | `card`, `gt` |
-| `xe_gpu_power_watts` | Power draw | `card`, `type` |
+| `xe_gpu_power_watts` | Power draw (non-blocking energy delta) | `card`, `type` |
+| `xe_gpu_power_cap_watts` | Configured power cap limit (`power*_cap`) | `card`, `type` |
+| `xe_gpu_power_crit_watts` | Critical power limit (`power*_crit`) | `card`, `type` |
+| `xe_gpu_temperature_celsius` | Temperature sensor reading (auto-discovered `temp*_input` / `temp*_label`) | `card`, `sensor` |
 | `xe_gpu_fan_rpm` | Fan speed | `card`, `fan` |
 | `xe_gpu_throttle_status` | Frequency throttle status (0 = unthrottled, >0 = throttled) | `card`, `gt` |
 | `xe_gpu_throttle_reason` | Frequency throttle reasons (flags) | `card`, `gt`, `reason` |
@@ -69,6 +73,7 @@ The following flags are available:
 - `-prom-port`: Port for Prometheus metrics (default: `9101`)
 - `-enable-prom`: Enable/disable Prometheus endpoint (default: `true`)
 - `-otlp-endpoint`: OTLP gRPC endpoint (e.g., `localhost:4317`)
+- `-enable-pmu`: Enable `xe` PMU per-engine busyness metrics (`xe_gpu_engine_busy_percent`, default: `false`). Note: on Linux 6.14 `xe` kernels, holding PMU engine events open prevents `gt-c6` idle residency (causing `xe_gpu_gt_usage_percent` to report 100%).
 - `-debug`: Enable verbose collection logging (default: `false`)
 
 ## Prometheus Configuration
