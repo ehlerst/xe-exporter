@@ -40,7 +40,7 @@ A high-performance Prometheus and OpenTelemetry exporter for Intel Arc GPUs (Bat
 
 - **Linux Kernel 6.8+** with the `xe` driver enabled.
 - **Intel Arc GPU** (e.g., B60, A770).
-- **Go 1.26+** (for building from source).
+- **Go 1.27+** (for building from source).
 - **Root Privileges:** Required to read metrics from `debugfs`.
 
 ## Installation

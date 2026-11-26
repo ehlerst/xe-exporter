@@ -1,0 +1,3 @@
+title: xe-exporter
+description: A high-performance Prometheus and OpenTelemetry exporter for Intel Arc GPUs
+theme: jekyll-theme-minimal
