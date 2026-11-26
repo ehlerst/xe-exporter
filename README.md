@@ -1,4 +1,6 @@
 # xe-exporter
+[Documentation & Project Page](https://ehlerst.github.io/xe-exporter/)
+
 This has been tested on a B60 only!
 
 ![Grafana Dashboard](assets/usage.png)
